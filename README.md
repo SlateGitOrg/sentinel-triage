@@ -4,39 +4,48 @@
 
 ![sentinel-triage](assets/hero.png)
 
-## The real problem
+[![CI](https://github.com/SlateGitOrg/sentinel-triage/actions/workflows/ci.yml/badge.svg)](https://github.com/SlateGitOrg/sentinel-triage/actions/workflows/ci.yml)
+
+## Why
 
 SIEMs generate thousands of low-fidelity alerts a day. Tier-1 analysts spend
-most of their shift manually correlating log lines across users, hosts, and
-IPs just to figure out whether ten failed logins are an attack or someone
-who forgot their password over a long weekend — and by the time they've
-correlated it by hand, the fatigue has already set in and real incidents
-start sliding past. Teams need automation that actually cuts
-mean-time-to-triage, not another noisy layer that hallucinates false
-positives and makes analysts trust the tooling even less.
+most of their shift correlating log lines across users, hosts, and IPs just to
+decide whether ten failed logins are an attack or someone who forgot their
+password over a long weekend. Automation that adds another noisy layer, or that
+hallucinates evidence, makes analysts trust the tooling less.
 
-`sentinel-triage` is a solo-buildable, trimmed-down slice of that problem:
-one log source (endpoint/auth events), correlated into candidate incidents,
-matched against Sigma rules mapped to MITRE ATT&CK, summarized by an LLM
-that must cite the exact log lines it used, and dropped into a lightweight
-analyst queue — with an eval harness that reports precision, recall, and
-false-positive rate against a labeled dataset, so "it feels smart" is
-replaced with a number.
+`sentinel-triage` takes one log source (endpoint and auth events), correlates it
+into candidate incidents, matches them against Sigma rules mapped to MITRE
+ATT&CK, summarizes each with an LLM that must cite the exact log lines it used,
+and drops the result into an analyst review queue. An eval harness reports
+precision, recall, and false-positive rate against a labeled dataset, so quality
+is a number rather than a feeling.
+
+## Features
+
+- Time-window, per-entity correlation of raw events into candidate incidents.
+- Sigma rule subset (field selections, `count` / `distinct_count` aggregations over a timeframe) with MITRE ATT&CK mapping; four bundled rules.
+- LLM triage through a single function-calling schema, with mechanical citation grounding: a hallucinated event id gets the assessment rejected.
+- SQLite review queue ordered by severity then confidence, with approve / reject / escalate transitions that cannot be overwritten.
+- Eval harness with overall and per-attack-type precision, recall, F1, and false-positive rate.
+- Runs fully offline (in-memory stream, fake index, deterministic fake LLM); real Redis, OpenSearch, and OpenAI adapters are available.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Endpoint / auth logs<br/>labeled dataset] --> B[Streaming ingestion<br/>Redis Streams]
-    B --> C[(OpenSearch<br/>event store)]
-    C --> D[Correlation engine<br/>time-window + entity clustering]
-    D --> E[Sigma / MITRE ATT&CK<br/>detection layer]
-    E --> F[LLM triage summarizer<br/>citation grounding + confidence score]
-    F --> G[Analyst review queue<br/>approve / reject / escalate]
-    D -.feeds.-> H[[Eval harness<br/>precision / recall / FPR<br/>on labeled set]]
-    E -.feeds.-> H
-    F -.feeds.-> H
+    A["Endpoint / auth logs<br/>labeled dataset"] --> B["Streaming ingestion<br/>Redis Streams"]
+    B --> C[("OpenSearch<br/>event store")]
+    C --> D["Correlation engine<br/>time-window + entity clustering"]
+    D --> E["Sigma / MITRE ATT&CK<br/>detection layer"]
+    E --> F["LLM triage summarizer<br/>citation grounding + confidence score"]
+    F --> G["Analyst review queue<br/>approve / reject / escalate"]
+    D -.-> H[["Eval harness<br/>precision / recall / FPR"]]
+    E -.-> H
+    F -.-> H
 ```
+
+Each stage is a plain module; the offline path swaps Redis and OpenSearch for in-memory fakes with the same interfaces.
 
 | Stage | Module | What it does |
 |---|---|---|
@@ -78,8 +87,27 @@ docker compose exec app python scripts/ingest_and_triage.py
 
 This is entirely optional — every code path above works against in-memory
 fakes and never touches Docker, a network socket, or a paid API. That's a
-deliberate design choice (see "Offline-verifiable by design" below), not a
+deliberate design choice (see "Offline by design" below), not a
 missing feature.
+
+## Example
+
+```
+$ python scripts/run_eval.py
+...
+  "precision": 1.0,
+  "recall": 0.8333,
+  "f1": 0.9091,
+  "false_positive_rate": 0.0
+$ python scripts/ingest_and_triage.py
+Ingested 388 events -> 296 candidate incidents
+Triaged 296 incidents
+
+=== Analyst review queue (pending, highest severity first) ===
+[HIGH    ] conf=0.97  target_bf_02
+   target_bf_02 triggered 1 detection(s) -- Brute Force Authentication Attempts (MITRE T1110, T1110.001) -- across 10 correlated events ...
+   cited events: evt-000334, evt-000335, evt-000336, ...
+```
 
 ## How it works
 
@@ -159,29 +187,28 @@ impossible-travel incidents are missed because the two logins in that
 scenario can land more than the 15-minute correlation window apart, so the
 correlation engine splits them into two single-country incidents before the
 detection layer ever sees them together — a real limitation of windowed
-correlation, not a detection-rule bug (see "Known limitations").
+correlation, not a detection-rule bug (see "Limitations").
 
-### Swapping in a real dataset
+### Using a real dataset
 
 Any CSV with columns `event_id, timestamp, host, user, src_ip, event_type,
 raw` (plus optional `country`, and for eval, `is_malicious`/`attack_type`)
-works with `ingestion.load_events_from_csv` unchanged. This trimmed
-prototype ships a synthetic dataset generated by
+works with `ingestion.load_events_from_csv` unchanged. The repo ships a synthetic dataset generated by
 `scripts/generate_dataset.py` — modeled on the shape of public auth-log
 corpora such as the LANL Comprehensive Multi-Source Cyber-Security Events
 dataset — rather than redistributing a large public dataset directly, so
 the repo stays small and the tests stay hermetic. Point `--dataset` at a
 real one (after mapping its columns) to get real numbers.
 
-## Known limitations
+## Limitations
 
 - **Correlation-window / rule-timeframe mismatch.** As above: if an
   attack's events span longer than the entity correlation window, the
   detection layer never gets to see them as one incident. A production
   version would correlate on a rolling basis across overlapping windows
   rather than a single greedy pass.
-- **Single log source.** Only endpoint/auth events are modeled. Real SOC
-  noise (network, DNS, EDR telemetry) is out of scope for this slice.
+- **Single log source.** Only endpoint/auth events are modeled. Network, DNS,
+  and EDR telemetry are out of scope.
 - **Sigma subset, not full Sigma.** No wildcard/regex field matching, no
   nested boolean parens, no `1 of selection*` syntax. Rules that need those
   would need translating.
@@ -189,15 +216,15 @@ real one (after mapping its columns) to get real numbers.
   gives deterministic, testable numbers; a real LLM will phrase summaries
   better but must still pass the same `validate_citation_grounding` check.
 
-## Stretch goals (documented, not built)
+## Non-goals and future work
 
-- Multi-format ingestion (syslog, CEF, JSON) with format auto-detection,
+- Not built: multi-format ingestion (syslog, CEF, JSON) with format auto-detection,
   beyond the single CSV/auth-log format built here.
-- Full pySigma backend integration for the complete Sigma condition
+- Not built: full pySigma backend integration for the complete Sigma condition
   grammar and community rule packs.
-- Cross-entity correlation (e.g. lateral movement across multiple users
+- Not built: cross-entity correlation (e.g. lateral movement across multiple users
   sharing a source IP) instead of single-entity time-window clustering.
-- A real Grafana dashboard definition (the `docker-compose.yml` starts
+- Not built: a Grafana dashboard definition (the `docker-compose.yml` starts
   Grafana, but no dashboard JSON is provisioned yet).
 
 ## Project layout
@@ -230,7 +257,7 @@ CI (`.github/workflows/ci.yml`) runs the dataset-generation determinism
 check, the full test suite, the eval harness, and a Docker build on every
 push/PR.
 
-## Offline-verifiable by design
+## Offline by design
 
 No secrets, no paid API calls, and no running Docker daemon or cluster are
 required to build or test this project. `FakeOpenSearchIndexer`,
