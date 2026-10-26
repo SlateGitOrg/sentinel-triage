@@ -1,7 +1,7 @@
 """Loads the single supported source type for this project:
 endpoint/auth logs in the canonical CSV schema produced by
 ``scripts/generate_dataset.py`` (or any real dataset conforming to the same
-columns -- see README "Swapping in a real dataset").
+columns -- see README "Using a real dataset").
 
 Multi-format ingestion (syslog/CEF/JSON) is documented future work, not
 implemented here (see README "Non-goals and future work").

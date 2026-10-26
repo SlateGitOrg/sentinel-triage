@@ -28,7 +28,7 @@ is a number rather than a feeling.
 - LLM triage through a single function-calling schema, with mechanical citation grounding: a hallucinated event id gets the assessment rejected.
 - SQLite review queue ordered by severity then confidence, with approve / reject / escalate transitions that cannot be overwritten.
 - Eval harness with overall and per-attack-type precision, recall, F1, and false-positive rate.
-- Runs fully offline (in-memory stream, fake index, deterministic fake LLM); real Redis, OpenSearch, and OpenAI adapters are available.
+- Runs fully offline by default (in-memory stream, fake index, deterministic fake LLM); real Redis, OpenSearch, and OpenAI adapters share the same interfaces.
 
 ## Architecture
 
@@ -85,10 +85,8 @@ docker compose up -d
 docker compose exec app python scripts/ingest_and_triage.py
 ```
 
-This is entirely optional — every code path above works against in-memory
-fakes and never touches Docker, a network socket, or a paid API. That's a
-deliberate design choice (see "Offline by design" below), not a
-missing feature.
+The compose stack is only needed to exercise the real adapters; everything
+above runs against the in-memory fakes.
 
 ## Example
 
@@ -104,10 +102,14 @@ Ingested 388 events -> 296 candidate incidents
 Triaged 296 incidents
 
 === Analyst review queue (pending, highest severity first) ===
-[HIGH    ] conf=0.97  target_bf_02
-   target_bf_02 triggered 1 detection(s) -- Brute Force Authentication Attempts (MITRE T1110, T1110.001) -- across 10 correlated events ...
-   cited events: evt-000334, evt-000335, evt-000336, ...
+[CRITICAL] conf=0.73  target_travel_01
+   target_travel_01 triggered 1 detection(s) -- Impossible Travel Between Successful Logins (MITRE T1078) -- across 2 correlated events ...
+   detections: Impossible Travel Between Successful Logins
+   mitre: T1078
+   cited events: evt-000364, evt-000365
 ```
+
+Output is trimmed; the queue continues with the remaining pending incidents.
 
 ## How it works
 
@@ -182,7 +184,7 @@ precision: 1.0000   recall: 0.8333   f1: 0.9091   false_positive_rate: 0.0000
 per-attack-type recall: brute_force 1.00, privilege_escalation 1.00, impossible_travel 0.50
 ```
 
-Reproduce with `python scripts/run_eval.py`. The honest gap: two of four
+Reproduce with `python scripts/run_eval.py`. Two of four
 impossible-travel incidents are missed because the two logins in that
 scenario can land more than the 15-minute correlation window apart, so the
 correlation engine splits them into two single-country incidents before the
@@ -216,16 +218,16 @@ real one (after mapping its columns) to get real numbers.
   gives deterministic, testable numbers; a real LLM will phrase summaries
   better but must still pass the same `validate_citation_grounding` check.
 
-## Non-goals and future work
+## Future work
 
-- Not built: multi-format ingestion (syslog, CEF, JSON) with format auto-detection,
-  beyond the single CSV/auth-log format built here.
-- Not built: full pySigma backend integration for the complete Sigma condition
-  grammar and community rule packs.
-- Not built: cross-entity correlation (e.g. lateral movement across multiple users
-  sharing a source IP) instead of single-entity time-window clustering.
-- Not built: a Grafana dashboard definition (the `docker-compose.yml` starts
-  Grafana, but no dashboard JSON is provisioned yet).
+- Multi-format ingestion (syslog, CEF, JSON) with format auto-detection; today only
+  the CSV auth-log format is supported.
+- pySigma backend integration for the complete Sigma condition grammar and
+  community rule packs.
+- Cross-entity correlation (e.g. lateral movement across users sharing a source
+  IP) alongside the current single-entity time-window clustering.
+- A provisioned Grafana dashboard: `docker-compose.yml` starts Grafana, but no
+  dashboard JSON ships yet.
 
 ## Project layout
 
@@ -250,7 +252,6 @@ tests/                        pytest suite (unit + offline integration)
 ```bash
 python -m pytest -v                          # full offline suite
 python -m pytest -v --cov=sentinel_triage      # with coverage
-python -m pytest -m integration                # (none bundled runnable offline; documents the marker)
 ```
 
 CI (`.github/workflows/ci.yml`) runs the dataset-generation determinism
@@ -259,8 +260,7 @@ push/PR.
 
 ## Offline by design
 
-No secrets, no paid API calls, and no running Docker daemon or cluster are
-required to build or test this project. `FakeOpenSearchIndexer`,
+`FakeOpenSearchIndexer`,
 `InMemoryEventStream`, and `FakeLLMClient` implement the exact same
 interfaces as their real counterparts (`OpenSearchIndexer`,
 `RedisEventStream`, `OpenAIFunctionCallingClient`), which are lazily

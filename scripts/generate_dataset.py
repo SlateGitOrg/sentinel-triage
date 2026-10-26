@@ -10,7 +10,7 @@ dataset and CICIDS2017's authentication-log subset): one row per
 authentication-relevant event with a user, host, source IP, coarse
 geo-country, event type, and a ground-truth malicious label plus attack
 family. Swapping in a real dataset only requires conforming to the same
-CSV columns (see README "Swapping in a real dataset").
+CSV columns (see README "Using a real dataset").
 
 Run with: python scripts/generate_dataset.py
 """
