@@ -4,7 +4,7 @@ incidents that an analyst works through with three actions -- approve
 scope unless ``escalate`` is used), reject (confirmed false positive), or
 escalate (needs a senior analyst / IR). This intentionally stops short of a
 full SOC console (no case management, no ticketing integration, no
-multi-analyst assignment) per the trimmed prototype scope.
+multi-analyst assignment) per the project scope.
 """
 
 from __future__ import annotations

@@ -1,10 +1,10 @@
-"""Loads the single supported source type for this trimmed prototype:
+"""Loads the single supported source type for this project:
 endpoint/auth logs in the canonical CSV schema produced by
 ``scripts/generate_dataset.py`` (or any real dataset conforming to the same
 columns -- see README "Swapping in a real dataset").
 
-Multi-format ingestion (syslog/CEF/JSON) is a documented stretch goal, not
-implemented here (see README "Stretch goals").
+Multi-format ingestion (syslog/CEF/JSON) is documented future work, not
+implemented here (see README "Non-goals and future work").
 """
 
 from __future__ import annotations

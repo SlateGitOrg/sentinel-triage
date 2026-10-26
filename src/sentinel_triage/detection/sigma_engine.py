@@ -21,7 +21,7 @@ What is implemented, and why it's a defensible subset rather than a toy:
 
 Not implemented (documented, not a hidden gap): full Sigma condition
 grammar (nested parens, ``1 of selection*``, wildcards/regex field
-matching), and non-authentication logsources. See README "Stretch goals".
+matching), and non-authentication logsources. See README "Non-goals and future work".
 """
 
 from __future__ import annotations
